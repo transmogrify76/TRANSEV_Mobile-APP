@@ -1,0 +1,7 @@
+{
+  "name": "transev",
+  "integrations": {
+    "capacitor": {}
+  },
+  "type": "react-vite"
+}
