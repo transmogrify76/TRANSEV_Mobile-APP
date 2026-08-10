@@ -10,7 +10,8 @@
 // Screens for those features intentionally keep talking to the old backend
 // (be.cms.ocpp.transev.site) until a routed contract exists.
 
-import { authedRequest, USER_APP_ROOT } from './http';
+import { API_ORIGIN, authedRequest, CPO_APP_ID, refreshSession, USER_APP_ROOT } from './http';
+import { getAccessToken } from './session';
 import {
   CustomerCharger,
   CustomerChargerList,
@@ -175,4 +176,37 @@ export function verifyRechargeOrder(
     method: 'POST',
     body: JSON.stringify(payload),
   });
+}
+
+// ---------------------------------------------------------------------------
+// Charger image
+// ---------------------------------------------------------------------------
+
+/**
+ * `charger.charger_image_url` (e.g. "/api/v1/app/chargers/a1b2c3/image") is an
+ * authenticated relative path, not a public image URL - a plain <img src>
+ * can't use it because it needs Authorization + X-CPO-App-ID headers. Fetch
+ * it as a blob and hand back a temporary object URL instead. Retries once
+ * after a token refresh on 401, same as authedRequest. Callers must revoke
+ * the returned URL (URL.revokeObjectURL) when done with it.
+ */
+export async function fetchChargerImageObjectUrl(relativePath: string): Promise<string> {
+  const doFetch = async (token: string | null) =>
+    fetch(`${API_ORIGIN}${relativePath}`, {
+      headers: {
+        'X-CPO-App-ID': CPO_APP_ID,
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+    });
+
+  let response = await doFetch(getAccessToken());
+  if (response.status === 401) {
+    const refreshed = await refreshSession();
+    response = await doFetch(refreshed.access_token);
+  }
+  if (!response.ok) {
+    throw new Error('charger image unavailable');
+  }
+  const blob = await response.blob();
+  return URL.createObjectURL(blob);
 }

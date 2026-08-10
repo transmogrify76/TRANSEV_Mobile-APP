@@ -140,10 +140,19 @@ export type CustomerHubSummary = {
   is_favorite: boolean;
 };
 
+export type CustomerNetworkStatus =
+  | 'ACTIVE'
+  | 'INACTIVE'
+  | 'SUSPENDED'
+  | 'UNDERMAINTENANCE'
+  | 'DECOMMISSIONED';
+
 export type CustomerConnector = {
   id: string;
   connector_number: number;
   connector_type: string;
+  connector_total_capacity: number;
+  status: CustomerNetworkStatus;
   availability: 'UNKNOWN';
 };
 
@@ -151,10 +160,18 @@ export type CustomerCharger = {
   id: string;
   hub_id: string;
   charger_id: string; // six-character public ID
+  charger_name?: string;
   vendor?: string;
   model?: string;
   max_power_kw: number;
   ocpp_version: string;
+  status: CustomerNetworkStatus;
+  charger_image_url?: string; // authenticated relative API path, e.g. /api/v1/app/chargers/{charger_id}/image
+  charger_type?: string;
+  segment?: string;
+  sub_segment?: string;
+  charger_use_type?: string;
+  parking?: string;
   hub_name?: string;
   hub_address?: string;
   hub_latitude?: number;
