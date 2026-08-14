@@ -1,14 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { useHistory } from 'react-router-dom';
 import { toast } from 'react-toastify';
-import { FaHome, FaWallet, FaRupeeSign, FaHistory, FaArrowUp, FaSpinner } from 'react-icons/fa';
+import { FaArrowLeft, FaWallet, FaRupeeSign, FaHistory, FaArrowUp, FaSpinner } from 'react-icons/fa';
 import {
   createRechargeOrder,
   getWallet,
   getWalletTransactions,
   verifyRechargeOrder,
 } from '../services/customerApi';
-import { CustomerWalletTransaction, CustomerWalletDetails } from '../types/auth';
+import { CustomerWalletTransaction } from '../types/auth';
 
 declare global {
   interface Window {
@@ -16,16 +16,10 @@ declare global {
   }
 }
 
-// Helper to generate idempotency key
 const generateIdempotencyKey = (): string =>
   typeof crypto !== 'undefined' && 'randomUUID' in crypto
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-
-// Define the actual API response shape for wallet
-interface WalletApiResponse {
-  wallet: CustomerWalletDetails;
-}
 
 const Wallet: React.FC = () => {
   const history = useHistory();
@@ -39,8 +33,7 @@ const Wallet: React.FC = () => {
 
   const fetchBalance = async () => {
     try {
-      // Cast the response to the actual shape
-     const response = (await getWallet()) as unknown as WalletApiResponse;
+      const response = await getWallet() as any;
       setBalance(response.wallet.balance);
       setCurrency(response.wallet.currency);
     } catch {
@@ -143,21 +136,26 @@ const Wallet: React.FC = () => {
     new Date(dateStr).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
   return (
-    <div className="min-h-[100dvh] overflow-y-auto bg-gradient-to-br from-brand-50 via-white to-blue-50 p-3 sm:p-4">
-      <div className="max-w-md mx-auto pb-6">
-        {/* Back Button */}
-        <div className="mb-4">
+    <div className="min-h-[100dvh] bg-gradient-to-b from-brand-50 via-white to-white">
+      {/* Header */}
+      <div className="sticky top-0 z-10 bg-white/80 backdrop-blur-lg border-b border-ink-100/60">
+        <div className="max-w-2xl mx-auto px-4 sm:px-6 py-4 flex items-center gap-3">
           <button
             onClick={() => history.push('/dashboard')}
-            className="p-3 bg-brand-600 rounded-full shadow-lg hover:bg-brand-700 transition-all duration-200"
+            className="p-2.5 rounded-full bg-ink-50 text-ink-700 hover:bg-ink-100 transition flex-shrink-0"
             aria-label="Back to dashboard"
           >
-            <FaHome className="text-white text-xl" />
+            <FaArrowLeft className="text-base" />
           </button>
+          <div className="min-w-0">
+            <h1 className="text-xl sm:text-2xl font-bold text-ink-900 tracking-tight">Wallet</h1>
+            <p className="text-xs sm:text-sm text-ink-400">Balance, recharge &amp; activity</p>
+          </div>
         </div>
+      </div>
 
-        {/* Wallet Card */}
-        <div className="bg-white/80 backdrop-blur-md rounded-3xl shadow-xl overflow-hidden">
+      <div className="max-w-md mx-auto px-4 sm:px-6 py-6 pb-10">
+        <div className="bg-white rounded-2.5xl shadow-soft overflow-hidden">
           <div className="bg-gradient-to-r from-brand-600 to-brand-500 px-5 sm:px-6 py-6">
             <div className="flex items-center justify-between text-white">
               <div className="min-w-0">
@@ -174,9 +172,8 @@ const Wallet: React.FC = () => {
           </div>
 
           <div className="p-5 sm:p-6">
-            {/* Recharge Section */}
             <div className="mb-6">
-              <h2 className="text-gray-700 font-semibold mb-3 flex items-center gap-2">
+              <h2 className="text-ink-800 font-semibold mb-3 flex items-center gap-2">
                 <FaRupeeSign className="text-brand-600" />
                 Recharge Amount
               </h2>
@@ -185,11 +182,10 @@ const Wallet: React.FC = () => {
                   <button
                     key={amount}
                     onClick={() => setSelectedAmount(amount)}
-                    className={`py-2.5 rounded-xl text-xs sm:text-sm font-semibold transition-all duration-200 ${
-                      selectedAmount === amount
-                        ? 'bg-brand-600 text-white shadow-md scale-95'
-                        : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                    }`}
+                    className={`py-2.5 rounded-xl text-xs sm:text-sm font-semibold transition-all duration-200 ${selectedAmount === amount
+                        ? 'bg-brand-600 text-white shadow-glow scale-95'
+                        : 'bg-ink-50 text-ink-600 hover:bg-ink-100'
+                      }`}
                   >
                     ₹{amount}
                   </button>
@@ -198,7 +194,7 @@ const Wallet: React.FC = () => {
               <button
                 onClick={handlePayment}
                 disabled={!selectedAmount || loading}
-                className="w-full bg-gradient-to-r from-brand-600 to-brand-500 text-white py-3 rounded-xl font-semibold shadow-md hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                className="w-full bg-gradient-to-r from-brand-600 to-brand-500 text-white py-3 rounded-2xl font-semibold shadow-glow hover:shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               >
                 {loading ? (
                   <>
@@ -214,10 +210,9 @@ const Wallet: React.FC = () => {
               </button>
             </div>
 
-            {/* Transaction History */}
             <div>
               <div className="flex items-center justify-between mb-3">
-                <h2 className="text-gray-700 font-semibold flex items-center gap-2">
+                <h2 className="text-ink-800 font-semibold flex items-center gap-2">
                   <FaHistory className="text-brand-600" />
                   Wallet Activity
                 </h2>
@@ -238,43 +233,41 @@ const Wallet: React.FC = () => {
                   </button>
                 </div>
               ) : transactions.length === 0 ? (
-                <div className="text-center py-8 bg-gray-50 rounded-xl">
-                  <FaHistory className="mx-auto text-gray-300 text-3xl mb-2" />
-                  <p className="text-gray-400 text-sm">No wallet activity yet</p>
-                  <p className="text-gray-400 text-xs mt-1">Your transactions will appear here</p>
+                <div className="text-center py-10 bg-ink-50 rounded-2xl">
+                  <FaHistory className="mx-auto text-ink-300 text-3xl mb-2" />
+                  <p className="text-ink-400 text-sm">No wallet activity yet</p>
+                  <p className="text-ink-300 text-xs mt-1">Your transactions will appear here</p>
                 </div>
               ) : (
                 <div className="space-y-3 pr-1">
                   {transactions.map((tx) => (
                     <div
                       key={tx.id}
-                      className="bg-white p-4 rounded-xl shadow-sm hover:shadow-md transition-all border border-gray-100"
+                      className="bg-white p-4 rounded-2xl shadow-soft hover:shadow-card transition-all border border-ink-50"
                     >
                       <div className="flex justify-between items-start gap-2">
                         <div className="min-w-0">
                           <p
-                            className={`font-bold text-base sm:text-lg ${
-                              tx.transaction_type === 'CREDIT' ? 'text-green-600' : 'text-gray-800'
-                            }`}
+                            className={`font-bold text-base sm:text-lg ${tx.transaction_type === 'CREDIT' ? 'text-green-600' : 'text-ink-800'
+                              }`}
                           >
                             {tx.transaction_type === 'CREDIT' ? '+' : '-'} ₹{tx.amount}
                           </p>
-                          <p className="text-xs text-gray-500 truncate">{tx.description}</p>
+                          <p className="text-xs text-ink-400 truncate">{tx.description}</p>
                           <span
-                            className={`inline-block mt-1 text-[10px] font-medium px-2 py-0.5 rounded-full ${
-                              tx.status === 'COMPLETED'
+                            className={`inline-block mt-1 text-[10px] font-medium px-2 py-0.5 rounded-full ${tx.status === 'COMPLETED'
                                 ? 'bg-green-100 text-green-700'
                                 : tx.status === 'PENDING'
-                                ? 'bg-amber-100 text-amber-700'
-                                : 'bg-red-100 text-red-700'
-                            }`}
+                                  ? 'bg-amber-100 text-amber-700'
+                                  : 'bg-red-100 text-red-700'
+                              }`}
                           >
                             {tx.status}
                           </span>
                         </div>
                         <div className="text-right flex-shrink-0">
-                          <p className="text-xs text-gray-500">{formatDate(tx.created_at)}</p>
-                          <p className="text-xs text-gray-400">{formatTime(tx.created_at)}</p>
+                          <p className="text-xs text-ink-400">{formatDate(tx.created_at)}</p>
+                          <p className="text-xs text-ink-300">{formatTime(tx.created_at)}</p>
                         </div>
                       </div>
                     </div>

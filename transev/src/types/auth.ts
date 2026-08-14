@@ -134,7 +134,7 @@ export type CustomerHubSummary = {
   address: string;
   latitude: number;
   longitude: number;
-  twenty_four_seven_open_status: boolean;
+  open_24_hours: boolean;
   customer_visible: true;
   charger_count: number;
   is_favorite: boolean;
@@ -176,11 +176,27 @@ export type CustomerCharger = {
   hub_address?: string;
   hub_latitude?: number;
   hub_longitude?: number;
-  twenty_four_seven_open_status?: boolean;
+  // The charger's own opening-hours flag - distinct from the attached hub's.
+  twenty_four_seven_open_status: boolean;
+  // The attached hub's opening-hours flag (CustomerHubSummary.open_24_hours).
+  hub_open_24_hours?: boolean;
   distance_km?: number;
   availability: 'UNKNOWN';
   is_favorite: boolean;
   connectors: CustomerConnector[];
+};
+
+export type CustomerChargerLocation = {
+  charger_name: string;
+  latitude: number;
+  longitude: number;
+};
+
+export type CustomerChargerLocationList = {
+  chargers: CustomerChargerLocation[];
+  next_before?: string;
+  next_before_id?: string;
+  has_more: boolean;
 };
 
 export type CustomerChargerList = {

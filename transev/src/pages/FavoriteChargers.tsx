@@ -148,7 +148,7 @@ const FavoriteChargers: React.FC = () => {
   );
 
   return (
-    <div className="min-h-[100dvh] bg-gradient-to-b from-brand-50 via-white to-white">
+    <div className="h-[100dvh] overflow-y-auto bg-gradient-to-b from-brand-50 via-white to-white">
       {/* Header */}
       <div className="sticky top-0 z-10 bg-white/80 backdrop-blur-lg border-b border-ink-100/60">
         <div className="max-w-2xl mx-auto px-4 sm:px-6 py-4 flex items-center gap-3">
@@ -331,7 +331,7 @@ const FavoriteChargers: React.FC = () => {
                     </span>
                     <span className="inline-flex items-center gap-1">
                       <IonIcon icon={timeOutline} className="text-sm text-ink-300" />
-                      {hub.twenty_four_seven_open_status ? '24/7' : 'Specific hours'}
+                      {hub.open_24_hours ? '24/7' : 'Specific hours'}
                     </span>
                   </div>
                 </div>

@@ -15,6 +15,7 @@ import { getAccessToken } from './session';
 import {
   CustomerCharger,
   CustomerChargerList,
+  CustomerChargerLocationList,
   CustomerFavorites,
   CustomerHub,
   CustomerHubList,
@@ -94,6 +95,19 @@ export function getChargers(params?: GetChargersParams): Promise<CustomerCharger
 
 export function getCharger(chargerId: string): Promise<CustomerCharger> {
   return authedRequest<CustomerCharger>(USER_APP_ROOT, `/chargers/${chargerId}`, { method: 'GET' });
+}
+
+/**
+ * Compact map-pin projection: only charger_name + coordinates, no inventory
+ * or availability detail. Accepts the same filters as getChargers (including
+ * near-me lat/lng/radius_km), but never paginated for near-me queries.
+ */
+export function getChargerLocations(params?: GetChargersParams): Promise<CustomerChargerLocationList> {
+  return authedRequest<CustomerChargerLocationList>(
+    USER_APP_ROOT,
+    `/chargers/locations${query(params || {})}`,
+    { method: 'GET' }
+  );
 }
 
 // ---------------------------------------------------------------------------
