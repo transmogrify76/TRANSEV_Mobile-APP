@@ -15,7 +15,7 @@ interface Booking {
 
 interface ChargerDetail {
     uid: string;
-    // Add other relevant fields from your charger details if needed
+    
 }
 
 const MyBookingsList: React.FC = () => {
@@ -26,7 +26,7 @@ const MyBookingsList: React.FC = () => {
 
     // Fetch bookings from the API
     const fetchBookings = async () => {
-        const apiUrl = 'https://be.cms.ocpp.transev.site/users/getbookings'; // Adjust the URL as necessary
+        const apiUrl = 'https://be.cms.ocpp.transev.site/users/getbookings'; 
         const token = localStorage.getItem('token');
 
         if (!token) {

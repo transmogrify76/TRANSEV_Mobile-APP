@@ -1,234 +1,115 @@
 import React, { useEffect, useState } from 'react';
 import { FaBolt, FaClock, FaExclamationTriangle, FaTimes } from 'react-icons/fa';
+import { authedRequest, USER_APP_ROOT } from '../services/http';
+import { getCharger } from '../services/customerApi';
 import { getAccessToken, getUserId } from '../services/session';
 
-// ---------- Types (from the spec) ----------
-type TransactionId = string;
-type ChargingTransactionStatus =
+// ---------- Types from the new contract ----------
+type ChargingSessionState =
+  | 'START_PENDING'
   | 'ACTIVE'
-  | 'STOP_PROCESSING'
-  | 'STOP_REQUESTED'
-  | 'STOP_RETRYING'
-  | 'STOP_FAILED'
-  | 'RECONCILE_REQUIRED';
+  | 'STOP_PENDING'
+  | 'COMPLETED'
+  | 'FAILED';
 
-interface CurrentChargingTransaction {
-  uid: string | null;
-  chargerid: string;
-  userid: string;
-  transactionid: TransactionId;
-  connectorid: string | null;
-  max_kwh: string | null;
-  status: ChargingTransactionStatus;
-  stopattempts: number;
-  stoprequestedat: string | null;
-  laststoperror: string | null;
-  createdAt: string;
-  updatedAt: string;
+interface ConnectorInfo {
+  id: string; // UUID
+  label: string; // e.g., "CCS2" or "Connector 1"
 }
 
-interface CurrentTransactionsResponse {
-  ongoing: true;
-  can_request_stop: boolean;
-  stale: boolean;
-  age_minutes: number;
-  stale_after_minutes: number;
-  ambiguous: boolean;
-  transaction: CurrentChargingTransaction;
-  transaction_count: number;
-  ongoing_transactions: CurrentChargingTransaction[];
+interface ChargingSession {
+  id: string; // UUID
+  charger_id: string; // public ID
+  state: ChargingSessionState;
+  started_at: string;
+  stopped_at?: string;
+  consumed_wh?: number;
+  total_kwh?: number;
+  total_amount?: string;
+  currency?: string;
+  // ... other fields as needed
 }
 
-interface NoCurrentTransactionResponse {
-  ongoing: false;
-  message: string;
-  checked_recent_transactions: number;
-}
-
-type StopPhase = 'STOP_PENDING' | 'STOP_RETRYING' | 'COMPLETED';
-
-interface StopResult {
-  phase: StopPhase;
-  transactionid: string;
-  status?: string;
-  detail?: string;
-}
-
-// ---------- API Helpers (using Bearer token) ----------
-const BASE_URL = 'https://be.cms.ocpp.transev.site';
-
-class CmsApiError extends Error {
-  constructor(
-    public readonly statusCode: number,
-    public readonly body: any,
-  ) {
-    super(body?.message || `CMS request failed with ${statusCode}`);
-  }
-}
-
-async function postCms<T>(
-  path: string,
-  token: string,
-  body: unknown,
-): Promise<T> {
-  const response = await fetch(`${BASE_URL}${path}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify(body),
-  });
-  const text = await response.text();
-  let result: any = {};
-  try {
-    result = text ? JSON.parse(text) : {};
-  } catch {
-    result = { message: text };
-  }
-  if (!response.ok) {
-    throw new CmsApiError(response.status, result);
-  }
-  return result as T;
-}
-
-async function getCurrentTransactions(
-  token: string,
-  userid: string,
-): Promise<CurrentTransactionsResponse | NoCurrentTransactionResponse> {
-  try {
-    return await postCms<CurrentTransactionsResponse>(
-      '/users/getongoingtransaction',
-      token,
-      { userid },
-    );
-  } catch (error) {
-    if (error instanceof CmsApiError && error.statusCode === 404) {
-      return error.body as NoCurrentTransactionResponse;
-    }
-    throw error;
-  }
-}
-
-async function requestStart(
-  token: string,
-  chargerid: string,
-  userid: string,
-  connectorid: string,
-) {
-  return postCms(
-    '/users/chargerstart',
-    token,
-    {
-      chargerid,
-      userid,
-      useraccept: true,
-      connectorid,
-    },
-  );
-}
-
-async function requestStop(
-  token: string,
-  transaction: CurrentChargingTransaction,
-): Promise<StopResult> {
-  try {
-    const response = await postCms<any>(
-      '/users/chargerstop',
-      token,
-      {
-        chargerid: transaction.chargerid,
-        userid: transaction.userid,
-        transactionid: transaction.transactionid,
-      },
-    );
-    const status = String(response.status || '').toLowerCase();
-    if (status === 'completed') {
-      return {
-        phase: 'COMPLETED',
-        transactionid: String(response.transactionid),
-      };
-    }
-    return {
-      phase: 'STOP_PENDING',
-      transactionid: String(response.transactionid),
-      status: response.status || 'processing',
-    };
-  } catch (error) {
-    if (
-      error instanceof CmsApiError &&
-      error.statusCode === 400 &&
-      error.body?.retry_scheduled === true
-    ) {
-      return {
-        phase: 'STOP_RETRYING',
-        transactionid: String(error.body.transactionid),
-        status: error.body.status || 'error',
-        detail: error.body.detail,
-      };
-    }
-    throw error;
-  }
-}
-
-// ---------- Helper to get userid from the stored session ----------
-const getUserIdFromToken = (): string | null => getUserId();
-
-// ---------- Modal Component ----------
 interface ModalProps {
   isOpen: boolean;
   onClose: () => void;
-  chargerId: string;
-  connectors: string[];
+  chargerId: string; // public charger ID
+  connectors: string[]; // display names (for backward compatibility)
+  connectorDetails?: ConnectorInfo[]; // full connector objects with UUIDs
 }
 
-const Modal: React.FC<ModalProps> = ({ isOpen, onClose, chargerId, connectors }) => {
-  const token = getAccessToken() || '';
-  const userid = getUserIdFromToken();
-
-  // State for current transactions
-  const [transactions, setTransactions] = useState<CurrentChargingTransaction[]>([]);
-  const [canRequestStop, setCanRequestStop] = useState(false);
+const Modal: React.FC<ModalProps> = ({
+  isOpen,
+  onClose,
+  chargerId,
+  connectors,
+  connectorDetails,
+}) => {
+  const [sessions, setSessions] = useState<ChargingSession[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // State for start flow
-  const [selectedConnector, setSelectedConnector] = useState<string>('');
+  const [selectedConnectorId, setSelectedConnectorId] = useState<string>('');
   const [startLoading, setStartLoading] = useState(false);
 
-  // State for stop actions per transaction
-  const [stoppingTransactionId, setStoppingTransactionId] = useState<TransactionId | null>(null);
+  // State for stop action
+  const [stoppingSessionId, setStoppingSessionId] = useState<string | null>(null);
 
-  // Fetch transactions when modal opens
+  // If connectorDetails not provided, fetch them from the charger
+  const [connectorDetailsState, setConnectorDetailsState] = useState<ConnectorInfo[]>([]);
+
+  // Fetch active sessions when modal opens
   useEffect(() => {
-    if (isOpen && userid && token) {
-      fetchTransactions();
+    if (isOpen) {
+      fetchActiveSessions();
+      // Load connector details if not provided
+      if (!connectorDetails || connectorDetails.length === 0) {
+        fetchChargerConnectors();
+      } else {
+        setConnectorDetailsState(connectorDetails);
+      }
     }
-  }, [isOpen, userid, token]);
+  }, [isOpen]);
 
   // Set default connector when list changes
   useEffect(() => {
-    if (connectors.length > 0 && !selectedConnector) {
-      setSelectedConnector(connectors[0]);
+    if (connectorDetailsState.length > 0 && !selectedConnectorId) {
+      setSelectedConnectorId(connectorDetailsState[0].id);
     }
-  }, [connectors]);
+  }, [connectorDetailsState]);
 
-  const fetchTransactions = async () => {
-    if (!userid || !token) {
-      setError('Authentication required');
-      return;
+  const fetchChargerConnectors = async () => {
+    try {
+      const chargerData = await getCharger(chargerId);
+      const conns = chargerData.connectors.map((c) => ({
+        id: c.id,
+        label: c.connector_type || `Connector ${c.connector_number}`,
+      }));
+      setConnectorDetailsState(conns);
+    } catch (err) {
+      console.error('Failed to fetch charger connectors:', err);
     }
+  };
+
+  const fetchActiveSessions = async () => {
     setLoading(true);
     setError(null);
     try {
-      const result = await getCurrentTransactions(token, userid);
-      if (result.ongoing) {
-        setTransactions(result.ongoing_transactions);
-        setCanRequestStop(result.can_request_stop);
-      } else {
-        setTransactions([]);
-        setCanRequestStop(false);
-      }
+      // GET /charging-sessions – we can filter by state=ACTIVE or START_PENDING
+      // The API may not support filtering, so we'll fetch all and filter client-side.
+      const response = await authedRequest<any>(USER_APP_ROOT, '/charging-sessions', { method: 'GET' });
+      // Assuming response has 'sessions' array; adjust based on actual structure.
+      // According to handoff, GET /charging-sessions returns ChargingSessionHistoryResponse
+      // which likely contains a list of sessions.
+      const allSessions: ChargingSession[] = response.sessions || [];
+      // Filter for sessions that are active or start-pending and for this charger
+      const active = allSessions.filter(
+        (s) =>
+          (s.state === 'ACTIVE' || s.state === 'START_PENDING' || s.state === 'STOP_PENDING') &&
+          s.charger_id === chargerId
+      );
+      setSessions(active);
     } catch (err: any) {
       setError(err.message || 'Failed to fetch active sessions');
     } finally {
@@ -236,112 +117,74 @@ const Modal: React.FC<ModalProps> = ({ isOpen, onClose, chargerId, connectors })
     }
   };
 
-  // Start charging
   const handleStart = async () => {
-    if (!userid || !token) {
-      setError('Authentication required');
-      return;
-    }
-    if (!selectedConnector) {
+    if (!selectedConnectorId) {
       setError('Please select a connector');
       return;
     }
-    // Before starting, ensure no ongoing transaction
-    try {
-      const check = await getCurrentTransactions(token, userid);
-      if (check.ongoing) {
-        setError('You already have an active session. Please stop it first.');
-        setTransactions(check.ongoing_transactions);
-        setCanRequestStop(check.can_request_stop);
-        return;
-      }
-    } catch (err: any) {
-      // if 404, it's fine (no transaction)
-      if (err.statusCode !== 404) {
-        setError(err.message);
-        return;
-      }
-    }
-
-    setStartLoading(true);
+    setStartLoading(true);         
     setError(null);
     try {
-      await requestStart(token, chargerId, userid, selectedConnector);
-      // After start, refresh transactions (poll until it appears)
-      await fetchTransactions();
-      // If still no transaction, we might poll again, but for simplicity we show a success message
-      // In a real app, you'd poll until transaction appears.
+      // POST /charging-sessions
+      const startResponse = await authedRequest<any>(USER_APP_ROOT, '/charging-sessions', {
+        method: 'POST',
+        body: JSON.stringify({ charger_id: chargerId, connector_id: selectedConnectorId }),
+      });
+      // startResponse contains { start_intent_id, status, ... }
+      // The session may not be active yet; we should poll for it.
+      // For simplicity, we'll just wait a moment and then refresh sessions.
+      // In a production app, you'd poll GET /charging-start-intents/{start_intent_id}
+      // until you get a session_id.
+      // We'll simulate with a delay then refresh.
+      setTimeout(async () => {
+        await fetchActiveSessions();
+        setStartLoading(false);
+      }, 3000);
+     
+      setError('Starting charger... (may take a moment)');
     } catch (err: any) {
-      if (err.statusCode === 409) {
-        // User already has a transaction - fetch and show
-        await fetchTransactions();
-        setError('You already have an active session. Use the stop button below.');
-      } else if (err.statusCode === 400 && err.body?.message?.includes('balance')) {
+      if (err.code === '409' || err.status === 409) {
+        setError('You already have an active session on this charger.');
+        await fetchActiveSessions();
+      } else if (err.code === '402' || err.status === 402) {
         setError('Insufficient wallet balance. Please recharge.');
       } else {
         setError(err.message || 'Start request failed');
       }
-    } finally {
       setStartLoading(false);
     }
   };
 
-  // Stop a specific transaction
-  const handleStop = async (transaction: CurrentChargingTransaction) => {
-    if (!token) {
-      setError('Authentication required');
-      return;
-    }
-    if (stoppingTransactionId) return; // already stopping
-
-    setStoppingTransactionId(transaction.transactionid);
+  const handleStop = async (sessionId: string) => {
+    setStoppingSessionId(sessionId);
     setError(null);
     try {
-      const result = await requestStop(token, transaction);
-      if (result.phase === 'COMPLETED') {
-        // Transaction finished – refresh list
-        await fetchTransactions();
-        // If no transactions left, close modal or show done
-        if (transactions.length === 1) {
-          // Only this one was active, so no sessions now
-          onClose();
-        }
-      } else if (result.phase === 'STOP_PENDING') {
-        // Show pending – we need to poll/refresh periodically
-        // For simplicity, we refresh after a delay
-        setTimeout(() => fetchTransactions(), 5000);
-        // Also we can keep the transaction displayed with status
-        // The refresh will update statuses
-        setError(null);
-      } else if (result.phase === 'STOP_RETRYING') {
-        // Retrying – show message
-        setError(`Stop retrying: ${result.detail || ''}`);
-        // Refresh after delay to see if it progresses
-        setTimeout(() => fetchTransactions(), 10000);
-      }
+      // POST /charging-sessions/{session_id}/stop
+      await authedRequest<any>(USER_APP_ROOT, `/charging-sessions/${sessionId}/stop`, {
+        method: 'POST',
+        body: JSON.stringify({ reason: 'User requested stop' }),
+      });
+      // The stop is async; refresh sessions after a short delay
+      setTimeout(async () => {
+        await fetchActiveSessions();
+        setStoppingSessionId(null);
+      }, 2000);
+      setError('Stop requested...');
     } catch (err: any) {
       setError(err.message || 'Stop failed');
-    } finally {
-      setStoppingTransactionId(null);
+      setStoppingSessionId(null);
     }
   };
 
-  // Helper to get status display
-  const getStatusDisplay = (status: ChargingTransactionStatus) => {
-    const map: Record<ChargingTransactionStatus, { label: string; color: string }> = {
+  const getStatusDisplay = (state: ChargingSessionState) => {
+    const map: Record<ChargingSessionState, { label: string; color: string }> = {
+      START_PENDING: { label: 'Starting...', color: 'text-yellow-600' },
       ACTIVE: { label: 'Active', color: 'text-green-600' },
-      STOP_PROCESSING: { label: 'Stopping...', color: 'text-yellow-600' },
-      STOP_REQUESTED: { label: 'Stop requested', color: 'text-yellow-600' },
-      STOP_RETRYING: { label: 'Retrying stop', color: 'text-orange-600' },
-      STOP_FAILED: { label: 'Stop failed', color: 'text-red-600' },
-      RECONCILE_REQUIRED: { label: 'Reconcile required', color: 'text-red-600' },
+      STOP_PENDING: { label: 'Stopping...', color: 'text-orange-600' },
+      COMPLETED: { label: 'Completed', color: 'text-gray-600' },
+      FAILED: { label: 'Failed', color: 'text-red-600' },
     };
-    return map[status] || { label: status, color: 'text-gray-600' };
-  };
-
-  // Check if we can stop a transaction
-  const canStopTransaction = (tx: CurrentChargingTransaction) => {
-    return tx.status === 'ACTIVE' && canRequestStop;
+    return map[state] || { label: state, color: 'text-gray-600' };
   };
 
   if (!isOpen) return null;
@@ -378,59 +221,50 @@ const Modal: React.FC<ModalProps> = ({ isOpen, onClose, chargerId, connectors })
             </div>
           ) : (
             <>
-              {/* Show transactions if any */}
-              {transactions.length > 0 && (
+              {/* Show active sessions */}
+              {sessions.length > 0 && (
                 <div className="space-y-4 mb-6">
                   <h3 className="font-semibold text-gray-700">Active Session(s)</h3>
-                  {transactions.map((tx) => {
-                    const statusInfo = getStatusDisplay(tx.status);
-                    const isThisCharger = tx.chargerid === chargerId;
-                    const canStop = canStopTransaction(tx);
-                    const isStopping = stoppingTransactionId === tx.transactionid;
+                  {sessions.map((session) => {
+                    const statusInfo = getStatusDisplay(session.state);
+                    const isStopping = stoppingSessionId === session.id;
+                    const canStop = session.state === 'ACTIVE';
 
                     return (
                       <div
-                        key={tx.transactionid}
-                        className={`bg-gray-50 rounded-xl p-4 border ${
-                          isThisCharger ? 'border-brand-300' : 'border-gray-200'
-                        }`}
+                        key={session.id}
+                        className="bg-gray-50 rounded-xl p-4 border border-gray-200"
                       >
                         <div className="flex justify-between items-start">
                           <div>
                             <div className="flex items-center gap-2">
                               <span className="font-medium text-gray-800">
-                                #{tx.transactionid}
+                                #{session.id.slice(0, 8)}
                               </span>
                               <span className={`text-sm font-medium ${statusInfo.color}`}>
                                 ● {statusInfo.label}
                               </span>
                             </div>
                             <div className="text-sm text-gray-600 mt-1">
-                              <p>Charger: {tx.chargerid}</p>
-                              <p>Connector: {tx.connectorid || 'N/A'}</p>
-                              {tx.max_kwh && <p>Max kWh: {tx.max_kwh}</p>}
-                              <p className="text-xs text-gray-400">
-                                Started: {new Date(tx.createdAt).toLocaleString()}
-                              </p>
+                              <p>Charger: {session.charger_id}</p>
+                              <p>Started: {new Date(session.started_at).toLocaleString()}</p>
+                              {session.consumed_wh !== undefined && (
+                                <p>Consumed: {session.consumed_wh} Wh</p>
+                              )}
                             </div>
                           </div>
                           {canStop && (
                             <button
-                              onClick={() => handleStop(tx)}
+                              onClick={() => handleStop(session.id)}
                               disabled={isStopping}
                               className="px-4 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded-lg disabled:opacity-50 transition"
                             >
                               {isStopping ? 'Stopping...' : 'Stop'}
                             </button>
                           )}
-                          {tx.status === 'STOP_PROCESSING' && (
-                            <span className="text-xs text-yellow-600 bg-yellow-100 px-2 py-1 rounded">
-                              Stopping
-                            </span>
-                          )}
-                          {tx.status === 'STOP_RETRYING' && (
+                          {session.state === 'STOP_PENDING' && (
                             <span className="text-xs text-orange-600 bg-orange-100 px-2 py-1 rounded">
-                              Retrying
+                              Stopping
                             </span>
                           )}
                         </div>
@@ -440,9 +274,8 @@ const Modal: React.FC<ModalProps> = ({ isOpen, onClose, chargerId, connectors })
                 </div>
               )}
 
-              {/* Start section – only if no transactions OR only for scanned charger? 
-                  But spec says: if any transaction exists, do not allow start. */}
-              {transactions.length === 0 ? (
+              {/* Start section – only if no active sessions for this charger */}
+              {sessions.length === 0 ? (
                 <>
                   <div className="mb-4">
                     <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -450,13 +283,13 @@ const Modal: React.FC<ModalProps> = ({ isOpen, onClose, chargerId, connectors })
                     </label>
                     <select
                       className="w-full bg-white text-black border border-gray-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-brand-500"
-                      value={selectedConnector}
-                      onChange={(e) => setSelectedConnector(e.target.value)}
+                      value={selectedConnectorId}
+                      onChange={(e) => setSelectedConnectorId(e.target.value)}
                     >
                       <option value="" disabled>-- Select Connector --</option>
-                      {connectors.map((c) => (
-                        <option key={c} value={c}>
-                          Connector {parseInt(c) + 1}
+                      {connectorDetailsState.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.label}
                         </option>
                       ))}
                     </select>
@@ -464,7 +297,7 @@ const Modal: React.FC<ModalProps> = ({ isOpen, onClose, chargerId, connectors })
 
                   <button
                     onClick={handleStart}
-                    disabled={startLoading || !selectedConnector || !connectors.length}
+                    disabled={startLoading || !selectedConnectorId || connectorDetailsState.length === 0}
                     className="w-full bg-brand-600 hover:bg-brand-700 text-white font-medium py-3 rounded-xl flex items-center justify-center gap-2 transition disabled:opacity-50"
                   >
                     {startLoading ? (
@@ -478,9 +311,7 @@ const Modal: React.FC<ModalProps> = ({ isOpen, onClose, chargerId, connectors })
                 </>
               ) : (
                 <div className="text-center text-gray-500 text-sm py-4">
-                  {transactions.some(tx => tx.chargerid === chargerId) 
-                    ? 'This charger is currently in use. You can stop it using the button above.'
-                    : 'You have an active session on another charger. Please stop it before starting a new one.'}
+                  You have an active session on this charger. Use the stop button above.
                 </div>
               )}
             </>

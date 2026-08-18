@@ -2,63 +2,80 @@ import React, { useState } from 'react';
 import QrReader from 'react-qr-barcode-scanner';
 import Modal from './Modal';
 import { FaQrcode, FaCheckCircle, FaExclamationTriangle, FaTimes } from 'react-icons/fa';
-import { getUserId as getStoredUserId } from '../services/session';
+import { getCharger } from '../services/customerApi';
 
-const QRScannerComponent: React.FC<{ onClose: () => void }> = ({ onClose }) => {
+interface QRScannerComponentProps {
+  onClose: () => void;
+}
+
+const QRScannerComponent: React.FC<QRScannerComponentProps> = ({ onClose }) => {
   const [scannedData, setScannedData] = useState<any>(null);
   const [availableConnectors, setAvailableConnectors] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [scanning, setScanning] = useState(true);
 
-  const STATUS_API = "https://dev-ocpphalapi.transev.site/api/status";
-  const OCPP_API_KEY = "J9YtyNYdbLD8N4qMwU2WQrr9XV2SJn4Q3qrCLEcHa8wwaZC34xhAd3RotuYdHwiB";
+  /**
+   * Safely extract charger ID (uid) from QR text.
+   * Handles JSON objects with uid/charger_id/id or plain strings.
+   */
+  const extractChargerId = (rawText: string): string | null => {
+    const trimmed = rawText.trim();
+    if (!trimmed) return null;
 
-  const getUserId = (): string | null => getStoredUserId();
-
-  const handleError = (err: any) => {
-    setError(err?.message || "Scanning failed");
-    setScanning(false);
-  };
-
-  const fetchChargerStatus = async (uid: string) => {
-    const response = await fetch(STATUS_API, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": OCPP_API_KEY,
-      },
-      body: JSON.stringify({ uid }),
-    });
-
-    const result = await response.json();
-    if (!response.ok || !result.connectors) {
-      throw new Error(result?.error || "Charger status fetch failed");
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (typeof parsed === 'string') return parsed.trim() || null;
+      if (parsed && typeof parsed === 'object') {
+        return parsed.uid || parsed.charger_id || parsed.id || parsed.chargerId || null;
+      }
+      return null;
+    } catch {
+      // Not JSON – treat the raw string as the charger ID
+      return trimmed;
     }
-
-    const connectors = Object.entries(result.connectors)
-      .filter(([_, conn]: any) => conn.status === "Available")
-      .map(([key]) => key);
-
-    return {
-      isOperative: result.status === "Active",
-      connectors,
-    };
   };
 
   const handleUpdate = async (_: any, result: any) => {
     if (!result?.text) return;
     setScanning(false);
-    try {
-      const parsed = JSON.parse(result.text);
-      const uid = parsed.uid;
 
-      const { connectors } = await fetchChargerStatus(uid);
-      setScannedData(parsed);
+    try {
+      const rawText = result.text;
+      const chargerId = extractChargerId(rawText);
+
+      if (!chargerId) {
+        setError('Could not extract charger ID from QR code.');
+        setScanning(true);
+        return;
+      }
+
+      // ✅ Use the existing getCharger function from customerApi
+      // This uses authedRequest which handles token injection and refresh
+      const chargerData = await getCharger(chargerId);
+
+      // Extract available connectors (status === 'ACTIVE' per new contract)
+      const connectors = chargerData.connectors
+        ?.filter((conn: any) => conn.status === 'ACTIVE')
+        ?.map((conn: any) => conn.connector_type || `Connector ${conn.connector_number}`) || [];
+
+      setScannedData({
+        uid: chargerId,
+        ChargerName: chargerData.charger_name || chargerData.hub_name || `Charger ${chargerId}`,
+        Chargertype: chargerData.charger_type,
+        Total_Capacity: chargerData.max_power_kw,
+        Connector_type: connectors.join(', '),
+        full_address: chargerData.hub_address,
+        status: chargerData.status,
+        connectors: chargerData.connectors,
+      });
+
       setAvailableConnectors(connectors);
       setModalOpen(true);
+      setError(null);
     } catch (err: any) {
-      setError(`QR Parse/Status Error: ${err.message}`);
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      setError(`Error: ${errorMessage}`);
     } finally {
       setScanning(true);
     }
@@ -99,10 +116,14 @@ const QRScannerComponent: React.FC<{ onClose: () => void }> = ({ onClose }) => {
             <div className="relative">
               <QrReader
                 delay={300}
-                onError={handleError}
+                onError={(err) => {
+                  // Safe error message extraction
+                  const errorMessage = err instanceof Error ? err.message : String(err);
+                  setError(errorMessage || 'Scanning failed');
+                  setScanning(false);
+                }}
                 onUpdate={handleUpdate}
               />
-              {/* Animated scanning line */}
               {scanning && !error && (
                 <div className="absolute inset-0 pointer-events-none">
                   <div className="absolute top-0 left-0 w-full h-1 bg-brand-500 animate-scan"></div>
@@ -110,7 +131,6 @@ const QRScannerComponent: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                 </div>
               )}
             </div>
-            {/* Guide frame - no blur, just a border and icon */}
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
               <div className="w-64 h-64 border-2 border-brand-400 rounded-lg shadow-lg bg-transparent flex items-center justify-center">
                 <FaQrcode className="text-brand-500 text-5xl opacity-40" />
@@ -132,10 +152,10 @@ const QRScannerComponent: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                   <p><strong className="text-gray-700">Type:</strong> {scannedData.Chargertype}</p>
                 )}
                 {scannedData?.Total_Capacity && (
-                  <p><strong className="text-gray-700">Capacity:</strong> {scannedData.Total_Capacity}</p>
+                  <p><strong className="text-gray-700">Capacity:</strong> {scannedData.Total_Capacity} kW</p>
                 )}
                 {scannedData?.Connector_type && (
-                  <p><strong className="text-gray-700">Connector:</strong> {scannedData.Connector_type}</p>
+                  <p><strong className="text-gray-700">Connectors:</strong> {scannedData.Connector_type}</p>
                 )}
                 {scannedData?.full_address && (
                   <p><strong className="text-gray-700">Address:</strong> {scannedData.full_address}</p>
@@ -146,13 +166,12 @@ const QRScannerComponent: React.FC<{ onClose: () => void }> = ({ onClose }) => {
         </div>
       </div>
 
-      {/* Modal */}
       <Modal
-  isOpen={modalOpen}
-  onClose={() => setModalOpen(false)}
-  chargerId={scannedData?.uid}
-  connectors={availableConnectors}
-/>
+        isOpen={modalOpen}
+        onClose={() => setModalOpen(false)}
+        chargerId={scannedData?.uid}
+        connectors={availableConnectors}
+      />
     </div>
   );
 };

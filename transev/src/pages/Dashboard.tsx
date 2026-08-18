@@ -45,8 +45,6 @@ const connectorDetailsFor = (charger: CustomerCharger) =>
 
 const titleFor = (charger: CustomerCharger) => charger.charger_name || charger.hub_name || charger.charger_id;
 
-// CMS administrative listing status - NOT live OCPP/HAL availability. Only
-// worth flagging in the UI when it's something other than the normal case.
 const LISTING_STATUS_LABEL: Record<CustomerNetworkStatus, string> = {
   ACTIVE: 'Active listing',
   INACTIVE: 'Inactive listing',
@@ -57,12 +55,6 @@ const LISTING_STATUS_LABEL: Record<CustomerNetworkStatus, string> = {
 
 const isNoteworthyStatus = (status: CustomerNetworkStatus) => status !== 'ACTIVE';
 
-/**
- * `charger_image_url` is an authenticated relative path, not a public image
- * URL, so a plain <img> can't use it directly. Fetches it as a blob object
- * URL and falls back to the bolt icon badge while loading, on error, or when
- * the charger has no image.
- */
 const ChargerThumb: React.FC<{ charger: CustomerCharger; size?: 'sm' | 'lg' }> = ({ charger, size = 'sm' }) => {
   const [src, setSrc] = useState<string | null>(null);
   const dim = size === 'lg' ? 'w-14 h-14' : 'w-12 h-12';
@@ -123,10 +115,6 @@ const Dashboard: React.FC = () => {
   const [viewMode, setViewMode] = useState<'list' | 'map'>('list');
   const [searchTerm, setSearchTerm] = useState('');
 
-  // "Nearby only" is an explicit opt-in toggle. Off by default: the list
-  // shows every published charger. Turning it on asks for the browser's
-  // location and re-fetches scoped to lat/lng/radius_km; turning it off (or
-  // if location isn't available) falls back to the general list.
   const [nearbyOnly, setNearbyOnly] = useState(false);
   const [coords, setCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [radiusKm, setRadiusKm] = useState(10);
@@ -152,10 +140,8 @@ const Dashboard: React.FC = () => {
     }
   };
 
-  // Initial load: general list, no location.
   useEffect(() => {
     fetchChargers();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const requestLocationAndFetch = (radius: number) => {
@@ -506,7 +492,6 @@ const Dashboard: React.FC = () => {
           <span className="text-[11px] font-medium">Wallet</span>
         </button>
 
-        {/* Raised center QR action */}
         <button
           onClick={toggleScanner}
           className="relative -translate-y-4 w-14 h-14 rounded-full bg-gradient-to-br from-brand-500 to-brand-600 text-white shadow-glow flex items-center justify-center active:scale-95 transition"
@@ -613,6 +598,7 @@ const Dashboard: React.FC = () => {
         </div>
       )}
 
+      {/* QR Scanner – no accessToken required; uses authedRequest internally */}
       {isScannerOpen && <QRScannerComponent onClose={toggleScanner} />}
     </div>
   );
